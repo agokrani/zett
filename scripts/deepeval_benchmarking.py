@@ -43,13 +43,14 @@ def default_answer_parser(text: str) -> Optional[float]:
                 continue
     return None
 
-class QwenR1(DeepEvalBaseLLM):
+class LLM(DeepEvalBaseLLM):
     def __init__(
         self,
         model_name: Optional[str] = None,
         tokenizer_name: Optional[str] = None,
         parse_func: Optional[Callable[[str], Optional[float]]] = None,
         eos_token_id=None,
+        device="cpu",
     ):
         self.model_name = model_name
         self.tokenizer_name = tokenizer_name
@@ -57,6 +58,7 @@ class QwenR1(DeepEvalBaseLLM):
         self.tokenizer = None
         self.parse_func = parse_func or default_answer_parser
         self.eos_token_id = eos_token_id
+        self.device = device
 
     def load_model(self):
         model = AutoModelForCausalLM.from_pretrained(self.model_name)
@@ -69,15 +71,14 @@ class QwenR1(DeepEvalBaseLLM):
         if not self.model:
             self.model, self.tokenizer = self.load_model()
 
-        device = "mps" # the device to load the model onto
         
         # Handle both string prompts and structured prompts
         if isinstance(prompt, str):
             prompt = [{"role": "user", "content": prompt}]
 
         prompt = self.tokenizer.apply_chat_template(prompt, add_generation_prompt=True, tokenize=False)
-        model_inputs = self.tokenizer([prompt], return_tensors="pt").to(device)
-        self.model.to(device)
+        model_inputs = self.tokenizer([prompt], return_tensors="pt").to(self.device)
+        self.model.to(self.device)
         input_length = model_inputs["input_ids"].shape[1]
         generated_ids = self.model.generate(**model_inputs, do_sample=True, eos_token_id=self.tokenizer.eos_token_id, max_new_tokens=2048)
         generated_ids = generated_ids[:, input_length:]
@@ -97,7 +98,6 @@ class QwenR1(DeepEvalBaseLLM):
     def batch_generate(self, prompts: List[str]) -> List[str]:
         if not self.model:
             self.model, self.tokenizer = self.load_model()
-        device = "mps"  # the device to load the model onto
 
         # Convert string prompts to chat format and apply template
         formatted_prompts = []
@@ -108,8 +108,8 @@ class QwenR1(DeepEvalBaseLLM):
             formatted_prompts.append(formatted_prompt)
 
         # Tokenize all prompts
-        model_inputs = self.tokenizer(formatted_prompts, return_tensors="pt", padding=True).to(device)
-        self.model.to(device)
+        model_inputs = self.tokenizer(formatted_prompts, return_tensors="pt", padding=True).to(self.device)
+        self.model.to(self.device)
 
         # Generate for all inputs
         input_length = model_inputs["input_ids"].shape[1]
@@ -124,25 +124,23 @@ class QwenR1(DeepEvalBaseLLM):
         return decoded_outputs
 
     def get_model_name(self):
-        return "QwenR1"
+        return self.model_name
     
-#qwen_r1 = QwenR1(model_name="outputs/qwen2.5-0.5B-instruct-r1-v2-lima-embed-full", tokenizer_name="deepseek-ai/DeepSeek-V3")
-#qwen_r1 = QwenR1(model_name="Qwen/Qwen2.5-0.5B-Instruct", tokenizer_name="Qwen/Qwen2.5-0.5B-Instruct")
 
-#phi4_mini = QwenR1(model_name="microsoft/Phi-4-mini-instruct", tokenizer_name="microsoft/Phi-4-mini-instruct", eos_token_id=200020)
-phi4_mini_r1 = QwenR1("outputs/phi4-mini-instruct-r1", "outputs/phi4-mini-instruct-r1", eos_token_id=1)
-#benchmark = MMLU(tasks=[MMLUTask.HIGH_SCHOOL_COMPUTER_SCIENCE, MMLUTask.ASTRONOMY])
+model_name = "outputs/phi4-mini-instruct-r1"
+tokenizer_name = "outputs/phi4-mini-instruct-r1"
+eos_token_id = 1
+device = "mps"
+output_file_path = "outputs/results/gsm8k_phi4-mini-r1-8shot.csv"
+llm = LLM(model_name, tokenizer_name, eos_token_id=eos_token_id, device=device)
 
-#esults = benchmark.evaluate(model=qwen_r1)
-
-#benchmark = MathQA()
 
 # Modify the benchmark initialization to avoid schema validation
 benchmark = GSM8K(n_shots=8, confinement_instructions="Make sure to output only the numerical answer in the following fomat: \n\n**Answer**: <number here>\n\n Please follow the instructions carefully and output format properly to get the correct score.")
 
-benchmark.evaluate(model=phi4_mini_r1)
+benchmark.evaluate(model=llm)
 
 print(benchmark.overall_score)
 print(benchmark.predictions)
-
+benchmark.predictions.to_csv(output_file_path)
 import pdb;pdb.set_trace()
